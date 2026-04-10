@@ -24,9 +24,6 @@
     "automation"
   ],
   "author": "Dhawal Shah",
-  "contributors": [
-    "Daniel Popa <hello@danielpopa.me> (https://danielpopa.me)"
-  ],
   "license": "MIT",
   "repository": {
     "type": "git",
