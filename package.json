@@ -34,6 +34,7 @@
   },
   "homepage": "https://github.com/dhawalshah/linkedin-ads-mcp#readme",
   "dependencies": {
+    "@google-cloud/firestore": "^7.10.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.0",

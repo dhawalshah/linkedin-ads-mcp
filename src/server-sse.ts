@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 /**
- * LinkedIn Ads MCP Server - Streamable HTTP Transport for Google Cloud Deployment
+ * LinkedIn Ads MCP — HTTP server (Cloud Run).
  *
- * Uses the MCP Streamable HTTP transport, compatible with claude.ai connectors
- * and Claude Desktop. Supports multiple concurrent team members.
+ * The /mcp endpoint is an OAuth 2.1 protected resource. The server also acts
+ * as the authorization server for it (see ./auth/oauth-server.ts), proxying
+ * user authentication to LinkedIn.
+ *
+ * Auth flow for MCP clients (Claude, etc.):
+ *
+ *   1. Client GETs /mcp without a token → 401 + WWW-Authenticate
+ *   2. Client follows the protected-resource metadata link, registers with
+ *      the authorization server (Dynamic Client Registration), and runs the
+ *      OAuth 2.1 authorization code flow with PKCE.
+ *   3. Client receives an opaque bearer issued by this server and includes
+ *      it on every /mcp request.
+ *   4. Middleware here validates the bearer, looks up the user's stored
+ *      LinkedIn credentials, and builds a per-request LinkedInApiClient.
  */
 
 import 'dotenv/config';
@@ -17,7 +29,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { LinkedInApiClient } from './lib/linkedin-api.js';
-import { TokenStore } from './auth/token-store.js';
+import { UserScopedTokenProvider } from './auth/firestore-store.js';
+import { oauthRouter, resolveBearer } from './auth/oauth-server.js';
 import {
   listAdAccountsTool,
   getAccountDetailsTool,
@@ -113,6 +126,7 @@ const TOOLS: Tool[] = [
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // /oauth/token uses form-encoded
 
 // CORS
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -120,31 +134,47 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id');
   res.header('Access-Control-Expose-Headers', 'Mcp-Session-Id');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
   next();
 });
 
-// Optional API key auth
-const API_KEY = process.env.MCP_API_KEY;
-const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  if (!API_KEY) return next();
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
-  }
-  if (authHeader.substring(7) !== API_KEY) {
-    return res.status(403).json({ error: 'Invalid API key' });
-  }
-  next();
-};
+// OAuth 2.1 authorization server endpoints
+app.use(oauthRouter);
 
-// Shared resources
-const tokenStore = new TokenStore();
-const apiClient = new LinkedInApiClient(tokenStore);
+function baseUrl(): string {
+  return (process.env.BASE_URL || '').replace(/\/$/, '');
+}
 
-function createMCPServer(): Server {
+// Service info / health
+app.get('/', (_req: Request, res: Response) => {
+  const base = baseUrl();
+  res.json({
+    name: 'LinkedIn Ads MCP',
+    mcp_endpoint: base ? `${base}/mcp` : '/mcp',
+    protected_resource_metadata: `${base}/.well-known/oauth-protected-resource`,
+  });
+});
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy', service: 'linkedin-ads-mcp', transport: 'streamable-http' });
+});
+
+// 401 with WWW-Authenticate per RFC 9728
+function unauthorized(res: Response): void {
+  const metadataUrl = `${baseUrl()}/.well-known/oauth-protected-resource`;
+  res.set(
+    'WWW-Authenticate',
+    `Bearer realm="mcp", resource_metadata="${metadataUrl}", error="invalid_token"`
+  );
+  res.status(401).json({ error: 'unauthorized' });
+}
+
+function createMCPServer(apiClient: LinkedInApiClient): Server {
   const server = new Server(
-    { name: 'linkedin-ads-mcp', version: '1.0.0' },
+    { name: 'linkedin-ads-mcp', version: '2.0.0' },
     { capabilities: { tools: {} } }
   );
 
@@ -152,15 +182,6 @@ function createMCPServer(): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-
-    const isAuthenticated = await tokenStore.hasValidToken();
-    if (!isAuthenticated) {
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: 'Not authenticated with LinkedIn. Please contact the administrator.' }) }],
-        isError: true,
-      };
-    }
-
     try {
       let result: unknown;
       switch (name) {
@@ -210,15 +231,27 @@ function createMCPServer(): Server {
   return server;
 }
 
-// Health check
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'healthy', service: 'linkedin-ads-mcp', version: '1.0.0', transport: 'streamable-http' });
-});
+// /mcp endpoint — OAuth-protected resource
+app.all('/mcp', async (req: Request, res: Response) => {
+  const auth = req.headers.authorization || '';
+  if (!auth.toLowerCase().startsWith('bearer ')) {
+    return unauthorized(res);
+  }
+  const accessToken = auth.slice(7).trim();
+  const record = await resolveBearer(accessToken);
+  if (!record) return unauthorized(res);
 
-// MCP endpoint - stateless, one transport per request
-app.all('/mcp', authMiddleware, async (req: Request, res: Response) => {
+  const tokenProvider = new UserScopedTokenProvider(record.user_email);
+  const liToken = await tokenProvider.getAccessToken();
+  if (!liToken) {
+    // The user's stored LinkedIn credentials are missing or unrefreshable.
+    // Force the client to re-run the OAuth flow.
+    return unauthorized(res);
+  }
+
+  const apiClient = new LinkedInApiClient(tokenProvider);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  const server = createMCPServer();
+  const server = createMCPServer(apiClient);
   const cleanup = () => server.close();
   res.on('finish', cleanup);
   res.on('close', cleanup);
@@ -232,5 +265,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`LinkedIn Ads MCP Server running on port ${PORT}`);
   console.log(`Health: http://0.0.0.0:${PORT}/health`);
   console.log(`MCP:    http://0.0.0.0:${PORT}/mcp`);
-  console.log(`Auth:   ${API_KEY ? 'ENABLED' : 'DISABLED'}`);
 });

@@ -1,4 +1,3 @@
-import { TokenStore } from '../auth/token-store.js';
 import {
   LinkedInApiResponse,
   LinkedInApiError,
@@ -14,6 +13,7 @@ import {
   TimeGranularity,
   DemographicPivot,
   EntityPivot,
+  TokenProvider,
 } from './types.js';
 
 const LINKEDIN_API_BASE = 'https://api.linkedin.com';
@@ -73,19 +73,19 @@ interface RequestOptions {
 }
 
 export class LinkedInApiClient {
-  private tokenStore: TokenStore;
+  private tokenProvider: TokenProvider;
   private retryCount = 3;
   private retryDelay = 1000;
 
-  constructor(tokenStore: TokenStore) {
-    this.tokenStore = tokenStore;
+  constructor(tokenProvider: TokenProvider) {
+    this.tokenProvider = tokenProvider;
   }
 
   /**
    * Makes an authenticated request to the LinkedIn API.
    */
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const accessToken = await this.tokenStore.getAccessToken();
+    const accessToken = await this.tokenProvider.getAccessToken();
     if (!accessToken) {
       throw new Error('Not authenticated. Please run: npm run auth');
     }
@@ -1125,7 +1125,7 @@ export class LinkedInApiClient {
     };
     const contentType = mimeTypes[ext] || 'application/octet-stream';
 
-    const accessToken = await this.tokenStore.getAccessToken();
+    const accessToken = await this.tokenProvider.getAccessToken();
     const uploadResponse = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {

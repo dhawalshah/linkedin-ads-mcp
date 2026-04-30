@@ -1,5 +1,14 @@
 // LinkedIn API Types
 
+/**
+ * Anything that can supply a current LinkedIn access token.
+ * Implemented by `TokenStore` (file-backed, local STDIO mode) and
+ * `UserScopedTokenProvider` (Firestore-backed, HTTP server mode).
+ */
+export interface TokenProvider {
+  getAccessToken(): Promise<string | null>;
+}
+
 export interface LinkedInTokens {
   access_token: string;
   expires_in: number;
