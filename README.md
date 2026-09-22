@@ -290,9 +290,9 @@ and Interpol. I am also an Accredited Director with the Singapore Institute of D
 which in practice means I get asked what breaks, who is accountable and what it costs
 before anyone asks what it can do.
 
-I write up the routines and agents I actually run at [dhawalshah.net](https://www.dhawalshah.net/about/).
+I write up the routines and agents I actually run at [dhawalshah.net](https://www.dhawalshah.net/about/?utm_source=github.com&utm_medium=referral&utm_campaign=linkedin-ads-mcp&utm_content=readme).
 
-Worth reading alongside this repo: [Google Ads, Meta, LinkedIn &amp; TikTok MCPs for Claude: Agency Setup Guide](https://www.dhawalshah.net/article/ad-platform-mcp-claude/).
+Worth reading alongside this repo: [Google Ads, Meta, LinkedIn &amp; TikTok MCPs for Claude: Agency Setup Guide](https://www.dhawalshah.net/article/ad-platform-mcp-claude/?utm_source=github.com&utm_medium=referral&utm_campaign=linkedin-ads-mcp&utm_content=readme).
 
 ---
 
